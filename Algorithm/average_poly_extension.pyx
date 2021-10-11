@@ -3,12 +3,9 @@
 # distutils: extra_compile_args = -fPIC
 
 r"""
-Wrapper for remainder forests.
-
-The remainder forest construction is an efficient mechanism for computing
-a sequence of quantities of the form ``V M(0) \cdots M(k_i-1) \pmod{m_i}``,
-where `M` is a square matrix over `\ZZ[x]`, `V` is a matrix over `\ZZ`,
-and `k_i` and `m_i` are sequences of integers.
+Modification of Edgar Costa's wrapper for remainder forests
+Accommodates remainder forests of matrices over orders of the form Z[alpha] in a number field
+Original can be found at https://github.com/edgarcosta/amortizedHGM/blob/master/average_poly.pyx
 """
 
 from cython cimport sizeof
@@ -260,36 +257,22 @@ def remainder_forest(M, m, k, kbase=0, indices=None, V=None, ans=None, kappa=Non
     return ans
 
 def poly_to_mat(p, f):
+    """
+    Given an element p of Z[x]/(f), expresses p as a sum involving the companion matrix of f
+    Parameters:
+    - p, a list representing a polynomial of degree <= deg(f)-1 in Z[x]/(f)
+    - f, an irreducible polynomial in Z
+    """
     Mf = companion_matrix(f)
-    # print(p)
     return sum(a * Mf**i for i,a in enumerate(p))
-
-# def mat_to_poly(m):
-#     return [r[0] for r in M]
 
 def inflate_matrix(M, var, f):
     """
-    Compute an inflation of a matrix over a polynomial ring.
-
-    The return value is a matrix over another polynomial ring with the specified variables omitted.
-    It is a block matrix with blocks corresponding to monomials in the omitted variables.
-
-    EXAMPLES::
-
-        sage: R.<x,y> = PolynomialRing(ZZ, 2)
-        sage: M = Matrix([[x+y, x*y], [x-y, 1]])
-        sage: inflate_matrix(M, [y], 2)
-        [ x  1  0  x]
-        [ 0  x  0  0]
-        [ x -1  1  0]
-        [ 0  x  0  1]
-        sage: inflate_matrix(M, [x,y], 2)
-        [ 0  0  1  0  0  0]
-        [ 0  0  1  0  0  0]
-        [ 0  0  0  0  0  0]
-        [ 0  0  1  1  0  0]
-        [ 0  0 -1  0  1  0]
-        [ 0  0  0  0  0  1]
+    Compute an inflation of a matrix over Z[a] to a matrix in Z
+    Parameters:
+    - M, a matrix whose entries are in Z[a] = Z[x]/(f)
+    - var, generator of the polynomial ring
+    - f, an irreducible polynomial in z
     """
     e = len(f)-1
 
@@ -310,12 +293,10 @@ def inflate_matrix(M, var, f):
     # h = R.hom(var_target)
     mat_dict = {}
     for i, j in product(range(dim[0]), range(dim[1])):
-        # a = h(M[i, j])
         a = M[i, j].list()
         if not a:
             a = [0]
         a_mat = poly_to_mat(a, f)
-        # print(a_mat)
         for p, q in product(range(e), range(e)):
             mat_dict[i*e + p, j*e + q] = a_mat[p, q]
 
@@ -324,16 +305,6 @@ def inflate_matrix(M, var, f):
 def deflate_matrix(M, var, f):
     """
     Undo the effect of ``inflate_matrix``.
-
-    EXAMPLES::
-
-        sage: R.<x,y> = PolynomialRing(ZZ, 2)
-        sage: M = Matrix([[x+y, x*y], [x-y, 1]])
-        sage: deflate_matrix(inflate_matrix(M, [y], 2), [y], 2) == M
-        True
-        sage: deflate_matrix(inflate_matrix(M, [x,y], 2), [x,y], 2)
-        [x + y     0]
-        [x - y     1]
     """
     e = len(f)-1
 
@@ -350,47 +321,7 @@ def deflate_matrix(M, var, f):
 
 def remainder_forest_number_field(M, var, k, f, indices=None, m=None, kbase=0, V=None, ans=None, kappa=None):
     """
-    Compute a remainder forest using one or more "generic primes".
-
-    INPUT:
-
-     - ``M``: a matrix of multivariate polynomials with integer coefficients.
-     - ``d``: a dictionary keyed by variables in the base ring of ``M``. Exactly one
-      variable must be omitted.
-     - ``e``: a positive integer.
-     - ``k``: a list or dict of integers, or a function (see below). This list must be monotone;
-         if a dict or function is given, it must evaluate to a monotone list when applied to ``indices``.
-     - ``indices``: a list or generator arbitrary values.
-     - ``kbase``: an integer (defaults to 0).
-     - ``m``: a lambda function on indices (see below).
-     - ``V``: a matrix of polynomials. If omitted, use the identity matrix.
-     - ``ans``: a dict of matrices (optional).
-     - ``kappa``: a tuning parameter (optional). This controls the number of trees in the forest.
-
-    OUTPUT:
-
-     As for ``remainder_forest`` except that ``M`` is evaluated with the variables named in ``d``
-     truncated modulo the ``e``-th power of the ideal they jointly generate, then specialized as per ``d``;
-     the other variable is evaluated at successive integers as before. Also, the moduli may not be specified freely:
-     if ``m`` is omitted, we impose that ``m[p] == p^e``.
-     
-     While ``d`` must include all but one variable, the values of ``d`` may omit keys. In these cases, the corresponding
-     variable is left unevaluated.
-
-    EXAMPLES:
-
-        sage: P.<x,y,z> = ZZ[]
-        sage: M = Matrix([[x+y+1,z],[y+z,1]])
-        sage: indices = prime_range(2, 50)
-        sage: k = {p: p-1 for p in indices}
-        sage: V = Matrix([[0,1+y]])
-        sage: d = {x: {p: p for p in indices}, y: {p: -p for p in indices}}
-        sage: ans = remainder_forest_generic_prime(M, d, 2, k, indices=indices, V=V)
-        sage: ans2 = {p: V.apply_map(lambda t: t.subs({x: p, y: -p})) for p in indices}
-        sage: ans2 = {p: ans2[p] * prod(M.apply_map(lambda t: t.subs({x: p, y: -p, z: j})) for j in range(k[p])) for p in indices}
-        sage: all((ans[p] - ans2[p]) % p^2 == 0 for p in indices)
-        True
-
+    Compute a remainder forest over an order Z[x]/(f) of a number field whose defining polynomial is f
     """
     e = len(f)-1
 
@@ -405,20 +336,13 @@ def remainder_forest_number_field(M, var, k, f, indices=None, m=None, kbase=0, V
             raise ValueError("Matrix dimension mismatch")
 
     R = M.base_ring()
-    # if any(x not in R.gens() for x in d):
-    #     raise ValueError("Invalid key in d")
-    # x = [x for x in R.gens() if x not in d]
-    # if len(x) != 1:
-    #    raise ValueError("d must omit exactly one variable of M")
-
-    # vars = list(d.keys())
+    
     if V is None:
         V1 = None
     else:
         V1 = inflate_matrix(V.change_ring(R), var, f)
     M1 = inflate_matrix(M, var, f)
 
-    # print(M1)
 
     if m is None:
         m = {p: p**e for p in indices}
@@ -426,18 +350,13 @@ def remainder_forest_number_field(M, var, k, f, indices=None, m=None, kbase=0, V
         m = {p: m(p) for p in indices}
     
     tmp = remainder_forest(M1, m, k, kbase=kbase, indices=indices, V=V1, kappa=kappa)
-    # if indices is None:
-    #     indices = tmp.keys()
+    
     if ans is None:
         ans = {i: 1 for i in indices}
 
     for i in indices:
         M2 = deflate_matrix(tmp[i], var, f)
         R2 = M2.base_ring()
-    #     d2 = {x: d[x][i] for x in R2.gens() if i in d[x]}
-    #     ans[i] *= M2.apply_map(lambda t,d2=d2: t.subs(d2))
         ans[i] *= M2
 
-    # if ansdict:
-    #     return None
     return ans
